@@ -13,7 +13,11 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173", // local frontend
+      "http://localhost:3000", // optional
+      "https://student-attendance-frontend-rose.vercel.app" // vercel frontend
+    ],
     credentials: true
   })
 );
