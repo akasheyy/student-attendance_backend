@@ -27,34 +27,25 @@ router.post("/", auth, async (req, res) => {
 
 // Get all students
 router.get("/", auth, async (req, res) => {
-  try {
-    const students = await Student.find().sort({ rollNo: 1 });
-    res.json(students);
-  } catch (err) {
-    console.error("get students error:", err.message);
-    res.status(500).json({ message: "Server error" });
-  }
+  const students = await Student.find({ isActive: true }).sort({ rollNo: 1 });
+  res.json(students);
 });
+
 
 module.exports = router;
 // Delete student
 router.delete("/:id", auth, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    const student = await Student.findById(id);
-    if (!student) {
-      return res.status(404).json({ message: "Student not found" });
-    }
-
-    await Student.findByIdAndDelete(id);
+    await Student.findByIdAndUpdate(req.params.id, {
+      isActive: false
+    });
 
     res.json({ message: "Student removed successfully" });
   } catch (err) {
-    console.error("delete student error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 // Update student
 router.put("/:id", auth, async (req, res) => {
   try {

@@ -8,11 +8,11 @@ const router = express.Router();
  * =========================
  * MARK ATTENDANCE (DAILY)
  * =========================
+ * One-time submission per date
  */
 router.post("/mark", auth, async (req, res) => {
   try {
     const { records, date } = req.body;
-    // records: [{ studentId, status }]
 
     if (!date || !Array.isArray(records)) {
       return res.status(400).json({ message: "Date and records required" });
@@ -21,29 +21,26 @@ router.post("/mark", auth, async (req, res) => {
     const day = new Date(date);
     day.setHours(0, 0, 0, 0);
 
-    const results = [];
-
-    for (const rec of records) {
-      if (!rec.studentId || !rec.status) continue;
-
-      const doc = await Attendance.findOneAndUpdate(
-        { studentId: rec.studentId, date: day },
-        {
-          studentId: rec.studentId,
-          date: day,
-          status: rec.status,
-        },
-        {
-          new: true,
-          upsert: true,
-          setDefaultsOnInsert: true,
-        }
-      );
-
-      results.push(doc);
+    const alreadyMarked = await Attendance.findOne({ date: day });
+    if (alreadyMarked) {
+      return res.status(400).json({
+        message: "Attendance already marked for this date"
+      });
     }
 
-    res.status(201).json(results);
+    const docs = records
+      .filter((rec) => rec.studentId && rec.status)
+      .map((rec) => ({
+        studentId: rec.studentId,
+        date: day,
+        status: rec.status
+      }));
+
+    await Attendance.insertMany(docs);
+
+    res.status(201).json({
+      message: "Attendance marked successfully"
+    });
   } catch (err) {
     console.error("mark attendance error:", err.message);
     res.status(500).json({ message: "Server error" });
@@ -70,7 +67,23 @@ router.get("/daily", auth, async (req, res) => {
       "name rollNo"
     );
 
-    res.json(records);
+    // ✅ Handle deleted students safely
+    const safeRecords = records.map((r) => ({
+      _id: r._id,
+      date: r.date,
+      status: r.status,
+      student: r.studentId
+        ? {
+            name: r.studentId.name,
+            rollNo: r.studentId.rollNo
+          }
+        : {
+            name: "Deleted Student",
+            rollNo: "-"
+          }
+    }));
+
+    res.json(safeRecords);
   } catch (err) {
     console.error("daily report error:", err.message);
     res.status(500).json({ message: "Server error" });
@@ -81,8 +94,6 @@ router.get("/daily", auth, async (req, res) => {
  * =========================
  * MONTHLY REPORT
  * =========================
- * Returns:
- * rollNo, name, present, absent, total, percentage
  */
 router.get("/monthly", auth, async (req, res) => {
   try {
@@ -131,12 +142,20 @@ router.get("/monthly", auth, async (req, res) => {
           as: "student"
         }
       },
-      { $unwind: "$student" },
+
+      // ✅ SAFE UNWIND (CRITICAL FIX)
+      {
+        $unwind: {
+          path: "$student",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+
       {
         $project: {
           _id: 0,
-          rollNo: "$student.rollNo",
-          name: "$student.name",
+          rollNo: { $ifNull: ["$student.rollNo", "-"] },
+          name: { $ifNull: ["$student.name", "Deleted Student"] },
           present: 1,
           absent: 1,
           total: 1,
@@ -163,6 +182,53 @@ router.get("/monthly", auth, async (req, res) => {
   }
 });
 
+/**
+ * =========================
+ * EDIT ATTENDANCE (WITH 24HR LOCK)
+ * =========================
+ */
+router.put("/edit", auth, async (req, res) => {
+  try {
+    const { date, records } = req.body;
 
+    if (!date || !Array.isArray(records)) {
+      return res.status(400).json({ message: "Date and records required" });
+    }
+
+    const day = new Date(date);
+    day.setHours(0, 0, 0, 0);
+
+    const existing = await Attendance.findOne({ date: day });
+    if (!existing) {
+      return res.status(404).json({
+        message: "Attendance not found for this date"
+      });
+    }
+
+    const now = new Date();
+    const diffHours =
+      (now.getTime() - day.getTime()) / (1000 * 60 * 60);
+
+    if (diffHours > 24) {
+      return res.status(403).json({
+        message: "Attendance is locked after 24 hours"
+      });
+    }
+
+    for (const rec of records) {
+      if (!rec.studentId || !rec.status) continue;
+
+      await Attendance.updateOne(
+        { studentId: rec.studentId, date: day },
+        { $set: { status: rec.status } }
+      );
+    }
+
+    res.json({ message: "Attendance updated successfully" });
+  } catch (err) {
+    console.error("edit attendance error:", err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 module.exports = router;
