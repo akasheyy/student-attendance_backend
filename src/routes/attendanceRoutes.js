@@ -6,9 +6,8 @@ const router = express.Router();
 
 /**
  * =========================
- * MARK ATTENDANCE (DAILY)
+ * MARK ATTENDANCE (ONE TIME)
  * =========================
- * One-time submission per date
  */
 router.post("/mark", auth, async (req, res) => {
   try {
@@ -21,26 +20,25 @@ router.post("/mark", auth, async (req, res) => {
     const day = new Date(date);
     day.setHours(0, 0, 0, 0);
 
-    const alreadyMarked = await Attendance.findOne({ date: day });
-    if (alreadyMarked) {
+    // ✅ Safer check (scalable)
+    const count = await Attendance.countDocuments({ date: day });
+    if (count > 0) {
       return res.status(400).json({
         message: "Attendance already marked for this date"
       });
     }
 
     const docs = records
-      .filter((rec) => rec.studentId && rec.status)
-      .map((rec) => ({
-        studentId: rec.studentId,
+      .filter((r) => r.studentId && r.status)
+      .map((r) => ({
+        studentId: r.studentId,
         date: day,
-        status: rec.status
+        status: r.status
       }));
 
     await Attendance.insertMany(docs);
 
-    res.status(201).json({
-      message: "Attendance marked successfully"
-    });
+    res.status(201).json({ message: "Attendance marked successfully" });
   } catch (err) {
     console.error("mark attendance error:", err.message);
     res.status(500).json({ message: "Server error" });
@@ -67,7 +65,6 @@ router.get("/daily", auth, async (req, res) => {
       "name rollNo"
     );
 
-    // ✅ Handle deleted students safely
     const safeRecords = records.map((r) => ({
       _id: r._id,
       date: r.date,
@@ -102,7 +99,7 @@ router.get("/monthly", auth, async (req, res) => {
       return res.status(400).json({ message: "Month and year required" });
     }
 
-    const m = Number(month); // 1–12
+    const m = Number(month);
     const y = Number(year);
 
     const report = await Attendance.aggregate([
@@ -112,24 +109,15 @@ router.get("/monthly", auth, async (req, res) => {
           year: { $year: "$date" }
         }
       },
-      {
-        $match: {
-          month: m,
-          year: y
-        }
-      },
+      { $match: { month: m, year: y } },
       {
         $group: {
           _id: "$studentId",
           present: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "present"] }, 1, 0]
-            }
+            $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] }
           },
           absent: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "absent"] }, 1, 0]
-            }
+            $sum: { $cond: [{ $eq: ["$status", "absent"] }, 1, 0] }
           },
           total: { $sum: 1 }
         }
@@ -142,15 +130,12 @@ router.get("/monthly", auth, async (req, res) => {
           as: "student"
         }
       },
-
-      // ✅ SAFE UNWIND (CRITICAL FIX)
       {
         $unwind: {
           path: "$student",
           preserveNullAndEmptyArrays: true
         }
       },
-
       {
         $project: {
           _id: 0,
@@ -184,7 +169,7 @@ router.get("/monthly", auth, async (req, res) => {
 
 /**
  * =========================
- * EDIT ATTENDANCE (WITH 24HR LOCK)
+ * EDIT ATTENDANCE (24 HR)
  * =========================
  */
 router.put("/edit", auth, async (req, res) => {
@@ -205,11 +190,10 @@ router.put("/edit", auth, async (req, res) => {
       });
     }
 
-    const now = new Date();
-    const diffHours =
-      (now.getTime() - day.getTime()) / (1000 * 60 * 60);
+    const hoursDiff =
+      (Date.now() - day.getTime()) / (1000 * 60 * 60);
 
-    if (diffHours > 24) {
+    if (hoursDiff > 24) {
       return res.status(403).json({
         message: "Attendance is locked after 24 hours"
       });
