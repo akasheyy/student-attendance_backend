@@ -22,6 +22,7 @@ app.use(
   })
 );
 
+
 app.get("/", (req, res) => {
   res.json({ message: "Student Attendance API running" });
 });

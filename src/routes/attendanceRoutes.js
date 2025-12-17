@@ -4,11 +4,16 @@ const auth = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Mark attendance for a day
+/**
+ * =========================
+ * MARK ATTENDANCE (DAILY)
+ * =========================
+ */
 router.post("/mark", auth, async (req, res) => {
   try {
     const { records, date } = req.body;
-    // records: [{ studentId, status }, ...]
+    // records: [{ studentId, status }]
+
     if (!date || !Array.isArray(records)) {
       return res.status(400).json({ message: "Date and records required" });
     }
@@ -23,8 +28,16 @@ router.post("/mark", auth, async (req, res) => {
 
       const doc = await Attendance.findOneAndUpdate(
         { studentId: rec.studentId, date: day },
-        { studentId: rec.studentId, date: day, status: rec.status },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
+        {
+          studentId: rec.studentId,
+          date: day,
+          status: rec.status,
+        },
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert: true,
+        }
       );
 
       results.push(doc);
@@ -37,11 +50,17 @@ router.post("/mark", auth, async (req, res) => {
   }
 });
 
-// Daily report
+/**
+ * =========================
+ * DAILY REPORT
+ * =========================
+ */
 router.get("/daily", auth, async (req, res) => {
   try {
     const { date } = req.query;
-    if (!date) return res.status(400).json({ message: "Date is required" });
+    if (!date) {
+      return res.status(400).json({ message: "Date is required" });
+    }
 
     const day = new Date(date);
     day.setHours(0, 0, 0, 0);
@@ -58,51 +77,92 @@ router.get("/daily", auth, async (req, res) => {
   }
 });
 
-// Monthly report (counts present days per student)
+/**
+ * =========================
+ * MONTHLY REPORT
+ * =========================
+ * Returns:
+ * rollNo, name, present, absent, total, percentage
+ */
 router.get("/monthly", auth, async (req, res) => {
   try {
-    const { month, year } = req.query; // month: 1-12
+    const { month, year } = req.query;
     if (!month || !year) {
       return res.status(400).json({ message: "Month and year required" });
     }
 
-    const m = Number(month) - 1; // JS month index
+    const m = Number(month); // 1–12
     const y = Number(year);
 
-    const start = new Date(y, m, 1);
-    const end = new Date(y, m + 1, 0, 23, 59, 59, 999);
-
-    const data = await Attendance.aggregate([
+    const report = await Attendance.aggregate([
+      {
+        $addFields: {
+          month: { $month: "$date" },
+          year: { $year: "$date" }
+        }
+      },
       {
         $match: {
-          date: { $gte: start, $lte: end }
+          month: m,
+          year: y
         }
       },
       {
         $group: {
           _id: "$studentId",
-          presentDays: {
+          present: {
             $sum: {
               $cond: [{ $eq: ["$status", "present"] }, 1, 0]
             }
           },
-          totalDays: { $sum: 1 }
+          absent: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "absent"] }, 1, 0]
+            }
+          },
+          total: { $sum: 1 }
         }
-      }
+      },
+      {
+        $lookup: {
+          from: "students",
+          localField: "_id",
+          foreignField: "_id",
+          as: "student"
+        }
+      },
+      { $unwind: "$student" },
+      {
+        $project: {
+          _id: 0,
+          rollNo: "$student.rollNo",
+          name: "$student.name",
+          present: 1,
+          absent: 1,
+          total: 1,
+          percentage: {
+            $round: [
+              {
+                $multiply: [
+                  { $divide: ["$present", "$total"] },
+                  100
+                ]
+              },
+              2
+            ]
+          }
+        }
+      },
+      { $sort: { rollNo: 1 } }
     ]);
 
-    // populate student data
-    const populated = await Attendance.populate(data, {
-      path: "_id",
-      select: "name rollNo",
-      model: "Student"
-    });
-
-    res.json(populated);
+    res.json(report);
   } catch (err) {
     console.error("monthly report error:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 });
+
+
 
 module.exports = router;
