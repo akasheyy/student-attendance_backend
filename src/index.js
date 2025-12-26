@@ -22,18 +22,21 @@ app.use(
   })
 );
 
-
+// Health check
 app.get("/", (req, res) => {
   res.json({ message: "Student Attendance API running" });
 });
 
+// Routes
 const authRoutes = require("./routes/authRoutes");
 const studentRoutes = require("./routes/studentRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes"); // ✅ ADD THIS
 
 app.use("/api/auth", authRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/dashboard", dashboardRoutes); // ✅ ADD THIS
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
